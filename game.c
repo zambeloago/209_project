@@ -8,7 +8,7 @@
 static int next_ship_id = 1;
 
 // True if any ship has been placed on this board (any non-zero ship_id).
-static int grid_has_any_ship(const uint8_t ship_id[GRID_SIZE][GRID_SIZE]) {
+static int grid_has_any_ship(const int ship_id[GRID_SIZE][GRID_SIZE]) {
     for (int r = 0; r < GRID_SIZE; r++) {
         for (int c = 0; c < GRID_SIZE; c++) {
             if (ship_id[r][c] != 0) {
@@ -27,7 +27,7 @@ void init_grid(char grid[GRID_SIZE][GRID_SIZE]) {
     }
 }
 
-void init_ship_id(uint8_t ship_id[GRID_SIZE][GRID_SIZE]) {
+void init_ship_id(int ship_id[GRID_SIZE][GRID_SIZE]) {
     for (int r = 0; r < GRID_SIZE; r++) {
         for (int c = 0; c < GRID_SIZE; c++) {
             ship_id[r][c] = 0;
@@ -40,7 +40,7 @@ int is_valid_cell(int row, int col) {
 }
 
 // Horizontal: same row, columns increase. Vertical: same column, rows increase.
-int can_place_ship(char grid[GRID_SIZE][GRID_SIZE], uint8_t ship_id[GRID_SIZE][GRID_SIZE], int row, int col, char dir, int len) {
+int can_place_ship(char grid[GRID_SIZE][GRID_SIZE], int ship_id[GRID_SIZE][GRID_SIZE], int row, int col, char dir, int len) {
     char d = (char)toupper((unsigned char)dir);
     if (len < 1) {
         return 0;
@@ -77,13 +77,13 @@ int can_place_ship(char grid[GRID_SIZE][GRID_SIZE], uint8_t ship_id[GRID_SIZE][G
     return 1;
 }
 
-void place_ship(char grid[GRID_SIZE][GRID_SIZE], uint8_t ship_id[GRID_SIZE][GRID_SIZE], int row, int col, char dir, int len) {
+void place_ship(char grid[GRID_SIZE][GRID_SIZE], int ship_id[GRID_SIZE][GRID_SIZE], int row, int col, char dir, int len) {
     // Fresh board (no ships yet) -> start IDs at 1 again (e.g. second player's fleet).
     if (!grid_has_any_ship(ship_id)) {
         next_ship_id = 1;
     }
 
-    if (next_ship_id < 1 || next_ship_id > 255) {
+    if (next_ship_id < 1) {
         return;
     }
 
@@ -91,16 +91,15 @@ void place_ship(char grid[GRID_SIZE][GRID_SIZE], uint8_t ship_id[GRID_SIZE][GRID
     int id = next_ship_id;
     next_ship_id++;
 
-    uint8_t uid = (uint8_t)id;
     if (d == 'H') {
         for (int c = col; c < col + len; c++) {
             grid[row][c] = 'S';
-            ship_id[row][c] = uid;
+            ship_id[row][c] = id;
         }
     } else {
         for (int r = row; r < row + len; r++) {
             grid[r][col] = 'S';
-            ship_id[r][col] = uid;
+            ship_id[r][col] = id;
         }
     }
 }
@@ -132,12 +131,12 @@ int apply_shot(Game *game, int target_idx, int row, int col) {
 }
 
 // Sunk iff every cell with this ship's id shows a hit ('X') on own_grid.
-int is_ship_sunk(char grid[GRID_SIZE][GRID_SIZE], uint8_t ship_id[GRID_SIZE][GRID_SIZE], int row, int col) {
+int is_ship_sunk(char grid[GRID_SIZE][GRID_SIZE], int ship_id[GRID_SIZE][GRID_SIZE], int row, int col) {
     if (!is_valid_cell(row, col)) {
         return 0;
     }
 
-    uint8_t id = ship_id[row][col];
+    int id = ship_id[row][col];
     if (id == 0) {
         return 0;
     }
