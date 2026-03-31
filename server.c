@@ -109,9 +109,12 @@ void handle_new_connection(int listen_fd) {
     send_msg(fd, "WAIT\n");
 
     if (game.p[0].fd != -1 && game.p[1].fd != -1) {
+        int fd0 = game.p[0].fd, fd1 = game.p[1].fd;
         reset_game(&game);
-        send_msg(game.p[0].fd, "PLACING\n");
-        send_msg(game.p[1].fd, "PLACING\n");
+        game.p[0].fd = fd0;
+        game.p[1].fd = fd1;
+        send_msg(fd0, "PLACING\n");
+        send_msg(fd1, "PLACING\n");
     }
 
 }
@@ -123,13 +126,16 @@ void handle_disconnect(int player_idx) {
     }
 
     int other = 1 - player_idx;
-    if (game.p[other].fd != -1) {
-        send_msg(game.p[other].fd, "ERR opponent disconnected\n");
-        send_msg(game.p[other].fd, "WAIT\n");
-    }
+    int other_fd = game.p[other].fd;
 
     reset_game(&game);
     game.state = WAITING;
+    game.p[other].fd = other_fd;
+
+    if (other_fd != -1) {
+        send_msg(other_fd, "ERR opponent disconnected\n");
+        send_msg(other_fd, "WAIT\n");
+    }
 }
 
 // message handling
@@ -310,9 +316,12 @@ void handle_rematch(int player_idx) {
 
     p->wants_rematch = 1;
     if (game.p[0].wants_rematch && game.p[1].wants_rematch) {
+        int fd0 = game.p[0].fd, fd1 = game.p[1].fd;
         reset_game(&game);
-        send_msg(game.p[0].fd, "PLACING\n");
-        send_msg(game.p[1].fd, "PLACING\n");
+        game.p[0].fd = fd0;
+        game.p[1].fd = fd1;
+        send_msg(fd0, "PLACING\n");
+        send_msg(fd1, "PLACING\n");
     } else {
         send_msg(p->fd, "WAIT\n");
     }
@@ -321,11 +330,10 @@ void handle_rematch(int player_idx) {
 //
 int main(int argc, char *argv[]) {
     if (argc != 2) { fprintf(stderr, "usage: %s <port>\n", argv[0]); exit(1); }
+    reset_game(&game);
     game.state    = WAITING;
     game.p[0].fd  = -1;
     game.p[1].fd  = -1;
-    reset_game(&game);
-    game.state = WAITING;
     int listen_fd = setup_server(atoi(argv[1]));
     main_loop(listen_fd);
     return 0;
