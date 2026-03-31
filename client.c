@@ -1,5 +1,6 @@
 #include "common.h"
 #include "utils.h"
+#include "game.h"
 
 #define ANSI_RED   "\033[31m"
 #define ANSI_GREEN "\033[32m"
@@ -10,6 +11,10 @@
 int  sockfd;
 char own_grid[GRID_SIZE][GRID_SIZE];
 char shot_grid[GRID_SIZE][GRID_SIZE];
+
+void update_grid(char grid[GRID_SIZE][GRID_SIZE], int row, int col, char val);
+void print_grids(void);
+void print_message(const char *msg);
 
 static int parse_coords_local(const char *str, int *row, int *col) {
     if (!str || !row || !col || strlen(str) < 2) return 0;

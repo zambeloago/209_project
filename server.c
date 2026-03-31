@@ -1,9 +1,19 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
+#include "common.h"
+#include "game.h"
+#include "utils.h"
+
+Game game;
+
+void main_loop(int listen_fd);
+void handle_new_connection(int listen_fd);
+void handle_disconnect(int player_idx);
+void handle_client_message(int player_idx);
+void dispatch_command(int player_idx, char *line);
+void handle_login(int player_idx, char *name);
+void handle_place(int player_idx, char *coords, char dir, int len);
+void handle_ready(int player_idx);
+void handle_fire(int player_idx, char *coords);
+void handle_rematch(int player_idx);
 
 // setup
 int setup_server(int port) {
@@ -33,7 +43,7 @@ int setup_server(int port) {
         close(listen_socket);
         exit(1);
     }
-    q
+
     printf("Server listening on port %d\n", port);
     return listen_socket;
 }
@@ -43,12 +53,26 @@ void main_loop(int listen_fd) {
     fd_set read_fds;
     while (1) {
         FD_ZERO(&read_fds);
-        // TODO: FD_SET listen_fd and each active player fd
-        // TODO: compute max_fd
-        // TODO: select(max_fd + 1, &read_fds, NULL, NULL, NULL)
-        // TODO: if listen_fd ready      -> handle_new_connection(listen_fd)
-        // TODO: if p[0].fd ready        -> handle_client_message(0)
-        // TODO: if p[1].fd ready        -> handle_client_message(1)
+        FD_SET(listen_fd, &read_fds);
+        int max_fd = listen_fd;
+
+        if (game.p[0].fd != -1) {
+            FD_SET(game.p[0].fd, &read_fds);
+            if (game.p[0].fd > max_fd) max_fd = game.p[0].fd;
+        }
+        if (game.p[1].fd != -1) {
+            FD_SET(game.p[1].fd, &read_fds);
+            if (game.p[1].fd > max_fd) max_fd = game.p[1].fd;
+        }
+
+        if (select(max_fd + 1, &read_fds, NULL, NULL, NULL) < 0) {
+            perror("select");
+            continue;
+        }
+
+        if (FD_ISSET(listen_fd, &read_fds)) handle_new_connection(listen_fd);
+        if (game.p[0].fd != -1 && FD_ISSET(game.p[0].fd, &read_fds)) handle_client_message(0);
+        if (game.p[1].fd != -1 && FD_ISSET(game.p[1].fd, &read_fds)) handle_client_message(1);
     }
 }
 
@@ -56,7 +80,6 @@ void main_loop(int listen_fd) {
 void handle_new_connection(int listen_fd) {
     struct sockaddr_in addr;
     socklen_t addrlen = sizeof(addr);
-    // TODO: accept(), reject if no free slot
     int fd = accept(listen_fd, (struct sockaddr*) &addr, &addrlen);
     if (fd == -1) {
         perror("accept");
@@ -66,57 +89,71 @@ void handle_new_connection(int listen_fd) {
     // find a free slot for new connection
     int slot = -1;
     if (game.p[0].fd == -1) {
-        slot = 0
+        slot = 0;
     } else if (game.p[1].fd == -1) {
-        slot = 1
+        slot = 1;
     }
 
     if (slot == -1) {
-        send_msg(game.p[0].fd, game.p[1].fd);
+        send_msg(fd, "ERR server full\n");
         close(fd);
+        return;
     }
-    // TODO: assign fd to free slot, send "WELCOME <slot>\n"
 
     game.p[slot].fd      = fd;
     game.p[slot].buf_len = 0;
+    memset(game.p[slot].buf, 0, sizeof(game.p[slot].buf));
+    game.p[slot].name[0] = '\0';
 
     send_msg(fd, "WELCOME %d\n", slot);
     send_msg(fd, "WAIT\n");
 
-    // TODO: if both slots filled: game.state = PLACING, send "PLACING\n" to both
-
     if (game.p[0].fd != -1 && game.p[1].fd != -1) {
-        game.state = PLACING;
-        send_msg(game.p[0].fd, "PLACING\n");
-        send_msg(game.p[1].fd, "PLACING\n");
+        int fd0 = game.p[0].fd, fd1 = game.p[1].fd;
+        reset_game(&game);
+        game.p[0].fd = fd0;
+        game.p[1].fd = fd1;
+        send_msg(fd0, "PLACING\n");
+        send_msg(fd1, "PLACING\n");
     }
 
 }
 
 void handle_disconnect(int player_idx) {
-    // TODO: close fd, set fd = -1
-    close(game.p[player_idx].fd);
-    // TODO: notify other player "ERR opponent disconnected\n"
-    int other = 1 - player_idx;
-    if (game.p[other].fd != -1) {
-        send_msg(game.p[other].fd, "ERR opponent disconnected\n");
+    if (game.p[player_idx].fd != -1) {
+        close(game.p[player_idx].fd);
+        game.p[player_idx].fd = -1;
     }
-    // TODO: reset_game(&game), game.state = WAITING
+
+    int other = 1 - player_idx;
+    int other_fd = game.p[other].fd;
+
     reset_game(&game);
     game.state = WAITING;
+    game.p[other].fd = other_fd;
+
+    if (other_fd != -1) {
+        send_msg(other_fd, "ERR opponent disconnected\n");
+        send_msg(other_fd, "WAIT\n");
+    }
 }
 
 // message handling
 void handle_client_message(int player_idx) {
     Player *p = &game.p[player_idx];
-    // TODO: recv() into p->buf + p->buf_len
+    if (p->buf_len >= BUF_SIZE - 1) {
+        p->buf_len = 0;
+        p->buf[0] = '\0';
+        send_msg(p->fd, "ERR line too long\n");
+        return;
+    }
+
     int n = recv(p->fd, p->buf + p->buf_len, BUF_SIZE - p->buf_len - 1, 0);
-    // TODO: if n <= 0: handle_disconnect(player_idx), return
     if (n <= 0) {
         handle_disconnect(player_idx);
         return;
     }
-    // TODO: update p->buf_len, null-terminate
+
     p->buf_len += n;
     p->buf[p->buf_len] = '\0';
 
@@ -127,16 +164,16 @@ void handle_client_message(int player_idx) {
         dispatch_command(player_idx, start);
         start = nl + 1;
     }
-    // TODO: memmove remaining bytes to front of buf, update buf_len
     p->buf_len = (p->buf + p->buf_len) - start;
     memmove(p->buf, start, p->buf_len);
+    p->buf[p->buf_len] = '\0';
 }
 
 void dispatch_command(int player_idx, char *line) {
     trim_newline(line);
     char *cmd = strtok(line, " ");
     if (!cmd) return;
-    // TODO: strcmp cmd and route to handler
+
     int fd = game.p[player_idx].fd;
 
     if (strcmp(cmd, "LOGIN")   == 0) {
@@ -150,7 +187,9 @@ void dispatch_command(int player_idx, char *line) {
     } else if (strcmp(cmd, "READY")   == 0) {
         handle_ready(player_idx);
     } else if (strcmp(cmd, "FIRE")    == 0) {
-        handle_fire(player_idx, strtok(NULL, " "));
+        char *coords = strtok(NULL, " ");
+        if (!coords) { send_msg(fd, "ERR bad args\n"); return; }
+        handle_fire(player_idx, coords);
     } else if (strcmp(cmd, "REMATCH") == 0) {
         handle_rematch(player_idx);
     } else if (strcmp(cmd, "QUIT")    == 0) {
@@ -162,37 +201,136 @@ void dispatch_command(int player_idx, char *line) {
 
 // command handlers
 void handle_login(int player_idx, char *name) {
-    // TODO: store name, send "OK\n"
+    int fd = game.p[player_idx].fd;
+    if (!name || !*name) {
+        send_msg(fd, "ERR bad args\n");
+        return;
+    }
+
+    strncpy(game.p[player_idx].name, name, NAME_LEN - 1);
+    game.p[player_idx].name[NAME_LEN - 1] = '\0';
+    send_msg(fd, "OK\n");
 }
 
 void handle_place(int player_idx, char *coords, char dir, int len) {
-    // TODO: validate state, coords, dir, len
-    // TODO: can_place_ship() -> place_ship(), ships_placed++, send "OK\n"
+    Player *p = &game.p[player_idx];
+    if (game.state != PLACING) {
+        send_msg(p->fd, "ERR not in placing phase\n");
+        return;
+    }
+    if (p->ships_placed >= MAX_SHIPS) {
+        send_msg(p->fd, "ERR all ships already placed\n");
+        return;
+    }
+
+    int row, col;
+    if (!parse_coords(coords, &row, &col)) {
+        send_msg(p->fd, "ERR bad coords\n");
+        return;
+    }
+    if (!can_place_ship(p->own_grid, p->ship_id, row, col, dir, len)) {
+        send_msg(p->fd, "ERR invalid placement\n");
+        return;
+    }
+
+    place_ship(p->own_grid, p->ship_id, row, col, dir, len);
+    p->ships_placed++;
+    send_msg(p->fd, "OK\n");
 }
 
 void handle_ready(int player_idx) {
-    // TODO: check ships_placed == MAX_SHIPS, set ready = 1
-    // TODO: if both ready: state = P1_TURN, send "YOUR_TURN\n"/"OPP_TURN\n"
-    // TODO: else send "WAIT\n"
+    Player *p = &game.p[player_idx];
+    if (game.state != PLACING) {
+        send_msg(p->fd, "ERR not in placing phase\n");
+        return;
+    }
+    if (p->ships_placed != MAX_SHIPS) {
+        send_msg(p->fd, "ERR place all ships first\n");
+        return;
+    }
+
+    p->ready = 1;
+    if (game.p[0].ready && game.p[1].ready) {
+        game.state = P1_TURN;
+        send_msg(game.p[0].fd, "YOUR_TURN\n");
+        send_msg(game.p[1].fd, "OPP_TURN\n");
+    } else {
+        send_msg(p->fd, "WAIT\n");
+    }
 }
 
 void handle_fire(int player_idx, char *coords) {
-    // TODO: check it's this player's turn
-    // TODO: apply_shot() -> send "HIT"/"MISS" to shooter, "OPP_HIT"/"OPP_MISS" to target
-    // TODO: if sunk: send "SUNK\n"/"OPP_SUNK\n"
-    // TODO: if win:  send "WIN\n"/"LOSE\n", state = GAME_OVER, return
-    // TODO: switch turns, send "YOUR_TURN\n"/"OPP_TURN\n"
+    int shooter = player_idx;
+    int target = 1 - shooter;
+    int shooter_turn = (game.state == P1_TURN && shooter == 0) || (game.state == P2_TURN && shooter == 1);
+    if (!shooter_turn) {
+        send_msg(game.p[shooter].fd, "ERR not your turn\n");
+        return;
+    }
+
+    int row, col;
+    if (!parse_coords(coords, &row, &col)) {
+        send_msg(game.p[shooter].fd, "ERR bad coords\n");
+        return;
+    }
+
+    int result = apply_shot(&game, target, row, col);
+    if (result == 0) {
+        send_msg(game.p[shooter].fd, "ERR invalid shot\n");
+        return;
+    }
+
+    if (result == 'H') {
+        game.p[shooter].shot_grid[row][col] = 'H';
+        send_msg(game.p[shooter].fd, "HIT %c%d\n", 'A' + col, row + 1);
+        send_msg(game.p[target].fd, "OPP_HIT %c%d\n", 'A' + col, row + 1);
+
+        if (is_ship_sunk(game.p[target].own_grid, game.p[target].ship_id, row, col)) {
+            send_msg(game.p[shooter].fd, "SUNK\n");
+            send_msg(game.p[target].fd, "OPP_SUNK\n");
+        }
+
+        if (check_win(&game, target)) {
+            game.state = GAME_OVER;
+            send_msg(game.p[shooter].fd, "WIN\n");
+            send_msg(game.p[target].fd, "LOSE\n");
+            return;
+        }
+    } else {
+        game.p[shooter].shot_grid[row][col] = 'M';
+        send_msg(game.p[shooter].fd, "MISS %c%d\n", 'A' + col, row + 1);
+        send_msg(game.p[target].fd, "OPP_MISS %c%d\n", 'A' + col, row + 1);
+    }
+
+    game.state = (shooter == 0) ? P2_TURN : P1_TURN;
+    send_msg(game.p[shooter].fd, "OPP_TURN\n");
+    send_msg(game.p[target].fd, "YOUR_TURN\n");
 }
 
 void handle_rematch(int player_idx) {
-    // TODO: set wants_rematch = 1
-    // TODO: if both want rematch: reset_game(), send "PLACING\n" to both
-    // TODO: else send "WAIT\n"
+    Player *p = &game.p[player_idx];
+    if (game.state != GAME_OVER) {
+        send_msg(p->fd, "ERR rematch only after game over\n");
+        return;
+    }
+
+    p->wants_rematch = 1;
+    if (game.p[0].wants_rematch && game.p[1].wants_rematch) {
+        int fd0 = game.p[0].fd, fd1 = game.p[1].fd;
+        reset_game(&game);
+        game.p[0].fd = fd0;
+        game.p[1].fd = fd1;
+        send_msg(fd0, "PLACING\n");
+        send_msg(fd1, "PLACING\n");
+    } else {
+        send_msg(p->fd, "WAIT\n");
+    }
 }
 
 //
 int main(int argc, char *argv[]) {
     if (argc != 2) { fprintf(stderr, "usage: %s <port>\n", argv[0]); exit(1); }
+    reset_game(&game);
     game.state    = WAITING;
     game.p[0].fd  = -1;
     game.p[1].fd  = -1;

@@ -2,8 +2,8 @@
 
 all: server client
 
-client: client.c utils.c common.h utils.h
-	gcc -Wall  -o client client.c utils.c -lpthread
+client: client.c utils.c game.c common.h utils.h game.h
+	gcc -Wall -o client client.c utils.c game.c -lpthread
 
 server: server.c game.c utils.c common.h game.h utils.h
 	gcc -Wall -o server server.c game.c utils.c
