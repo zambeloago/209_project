@@ -7,7 +7,7 @@ typedef enum { WAITING, PLACING, P1_TURN, P2_TURN, GAME_OVER } GameState;
 
 typedef struct {
     int  fd;
-    char name[NAME_LEN];
+    char name[NAME_LEN];  // Set by LOGIN only; not used by game logic in server.c (optional nickname).
     // Grids use: '.' water, 'S' ship (unhit), 'X' hit ship, 'M' miss (same on own_grid and shot_grid).
     char own_grid[GRID_SIZE][GRID_SIZE];
     // Parallel owner map: 0 = no ship, 1..N = ship id (unchanged when cell becomes 'X')
@@ -15,7 +15,7 @@ typedef struct {
     // shot_grid: '.' not yet fired, 'X' hit on opponent, 'M' miss on opponent
     char shot_grid[GRID_SIZE][GRID_SIZE];
     int  ships_placed;
-    // Fleet {2,3,3,4,5} in any order: ships_left_by_len[L] = how many of length L remain to place (use L=2..5).
+    // Fleet {2,3,3,4,5}
     int  ships_left_by_len[6];
     int  ships_remaining;
     int  ready;

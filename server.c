@@ -218,6 +218,9 @@ void dispatch_command(int player_idx, char *line) {
 }
 
 // command handlers
+
+// LOGIN only saves a display name on the Player; nothing in this server reads .name for rules or I/O.
+// Optional for clients; gameplay does not require it.
 void handle_login(int player_idx, char *name) {
     int fd = game.p[player_idx].fd;
     if (!name || !*name) {

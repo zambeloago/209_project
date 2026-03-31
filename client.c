@@ -154,7 +154,8 @@ void print_message(const char *msg) {
     else if (!strcmp(cmd, "LOSE"))       printf(ANSI_RED  "You lose.\n"                ANSI_RESET);
     else if (!strcmp(cmd, "SUNK"))       printf(ANSI_BOLD "You sank a ship!\n"         ANSI_RESET);
     else if (!strcmp(cmd, "OPP_SUNK"))   printf(ANSI_RED  "Your ship was sunk!\n"      ANSI_RESET);
-    else if (!strcmp(cmd, "PLACING"))  { printf("Place your ships.\n"); print_grids(); }
+    // Do not print_grids() here: server sends BOARD_OWN next (same empty board), which draws once.
+    else if (!strcmp(cmd, "PLACING"))  { printf("Place your ships.\n"); }
     else if (!strcmp(cmd, "WAIT"))       printf("Waiting for opponent...\n");
     else if (!strcmp(cmd, "ERR"))        printf(ANSI_RED "Error: %s\n" ANSI_RESET, rest ? rest : "");
     else                                 printf("%s\n", msg);
