@@ -123,7 +123,7 @@ int apply_shot(Game *game, int target_idx, int row, int col) {
     if (cell == 'S') {
         grid[row][col] = 'X';
         // ship_id[row][col] unchanged
-        return 'H';
+        return 'X';
     }
 
     // Already 'X' or 'M'
@@ -182,6 +182,12 @@ void reset_game(Game *game) {
         init_ship_id(game->p[i].ship_id);
         init_grid(game->p[i].shot_grid);
         game->p[i].ships_placed = 0;
+        game->p[i].ships_left_by_len[0] = 0;
+        game->p[i].ships_left_by_len[1] = 0;
+        game->p[i].ships_left_by_len[2] = 1;
+        game->p[i].ships_left_by_len[3] = 2;
+        game->p[i].ships_left_by_len[4] = 1;
+        game->p[i].ships_left_by_len[5] = 1;
         game->p[i].ships_remaining = 0;
         game->p[i].ready = 0;
         game->p[i].wants_rematch = 0;

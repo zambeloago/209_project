@@ -7,13 +7,16 @@ typedef enum { WAITING, PLACING, P1_TURN, P2_TURN, GAME_OVER } GameState;
 
 typedef struct {
     int  fd;
-    char name[NAME_LEN];
-    // own_grid: '.' water, 'S' ship (unhit), 'X' ship (hit), 'M' miss
+    char name[NAME_LEN];  // Set by LOGIN only; not used by game logic in server.c (optional nickname).
+    // Grids use: '.' water, 'S' ship (unhit), 'X' hit ship, 'M' miss (same on own_grid and shot_grid).
     char own_grid[GRID_SIZE][GRID_SIZE];
     // Parallel owner map: 0 = no ship, 1..N = ship id (unchanged when cell becomes 'X')
     int ship_id[GRID_SIZE][GRID_SIZE];
-    char shot_grid[GRID_SIZE][GRID_SIZE];  // '.' unknown  'H' your hit  'M' your miss
+    // shot_grid: '.' not yet fired, 'X' hit on opponent, 'M' miss on opponent
+    char shot_grid[GRID_SIZE][GRID_SIZE];
     int  ships_placed;
+    // Fleet {2,3,3,4,5}
+    int  ships_left_by_len[6];
     int  ships_remaining;
     int  ready;
     int  wants_rematch;
@@ -38,7 +41,7 @@ void place_ship    (char grid[GRID_SIZE][GRID_SIZE], int ship_id[GRID_SIZE][GRID
                     int row, int col, char dir, int len);
 
 // shots
-int  apply_shot   (Game *game, int target_idx, int row, int col); // 'H', 'M', or 0
+int  apply_shot   (Game *game, int target_idx, int row, int col); // 'X' hit, 'M' miss, 0 invalid
 int  is_ship_sunk (char grid[GRID_SIZE][GRID_SIZE], int ship_id[GRID_SIZE][GRID_SIZE],
                    int row, int col);
 int  check_win    (Game *game, int target_idx);
