@@ -57,22 +57,68 @@ void handle_new_connection(int listen_fd) {
     struct sockaddr_in addr;
     socklen_t addrlen = sizeof(addr);
     // TODO: accept(), reject if no free slot
+    int fd = accept(listen_fd, (struct sockaddr*) &addr, &addrlen);
+    if (fd == -1) {
+        perror("accept");
+        return;
+    }
+
+    // find a free slot for new connection
+    int slot = -1;
+    if (game.p[0].fd == -1) {
+        slot = 0
+    } else if (game.p[1].fd == -1) {
+        slot = 1
+    }
+
+    if (slot == -1) {
+        send_msg(game.p[0].fd, game.p[1].fd);
+        close(fd);
+    }
     // TODO: assign fd to free slot, send "WELCOME <slot>\n"
+
+    game.p[slot].fd      = fd;
+    game.p[slot].buf_len = 0;
+
+    send_msg(fd, "WELCOME %d\n", slot);
+    send_msg(fd, "WAIT\n");
+
     // TODO: if both slots filled: game.state = PLACING, send "PLACING\n" to both
+
+    if (game.p[0].fd != -1 && game.p[1].fd != -1) {
+        game.state = PLACING;
+        send_msg(game.p[0].fd, "PLACING\n");
+        send_msg(game.p[1].fd, "PLACING\n");
+    }
+
 }
 
 void handle_disconnect(int player_idx) {
     // TODO: close fd, set fd = -1
+    close(game.p[player_idx].fd);
     // TODO: notify other player "ERR opponent disconnected\n"
+    int other = 1 - player_idx;
+    if (game.p[other].fd != -1) {
+        send_msg(game.p[other].fd, "ERR opponent disconnected\n");
+    }
     // TODO: reset_game(&game), game.state = WAITING
+    reset_game(&game);
+    game.state = WAITING;
 }
 
 // message handling
 void handle_client_message(int player_idx) {
     Player *p = &game.p[player_idx];
     // TODO: recv() into p->buf + p->buf_len
+    int n = recv(p->fd, p->buf + p->buf_len, BUF_SIZE - p->buf_len - 1, 0);
     // TODO: if n <= 0: handle_disconnect(player_idx), return
+    if (n <= 0) {
+        handle_disconnect(player_idx);
+        return;
+    }
     // TODO: update p->buf_len, null-terminate
+    p->buf_len += n;
+    p->buf[p->buf_len] = '\0';
 
     char *start = p->buf;
     char *nl;
@@ -82,6 +128,8 @@ void handle_client_message(int player_idx) {
         start = nl + 1;
     }
     // TODO: memmove remaining bytes to front of buf, update buf_len
+    p->buf_len = (p->buf + p->buf_len) - start;
+    memmove(p->buf, start, p->buf_len);
 }
 
 void dispatch_command(int player_idx, char *line) {
@@ -89,13 +137,27 @@ void dispatch_command(int player_idx, char *line) {
     char *cmd = strtok(line, " ");
     if (!cmd) return;
     // TODO: strcmp cmd and route to handler
-    //   "LOGIN"   -> handle_login(player_idx, strtok(NULL, " "))
-    //   "PLACE"   -> handle_place(player_idx, coords, dir, len)
-    //   "READY"   -> handle_ready(player_idx)
-    //   "FIRE"    -> handle_fire(player_idx, strtok(NULL, " "))
-    //   "REMATCH" -> handle_rematch(player_idx)
-    //   "QUIT"    -> handle_disconnect(player_idx)
-    //   default   -> send_msg(fd, "ERR unknown command\n")
+    int fd = game.p[player_idx].fd;
+
+    if (strcmp(cmd, "LOGIN")   == 0) {
+        handle_login(player_idx, strtok(NULL, " "));
+    } else if (strcmp(cmd, "PLACE")   == 0) {
+        char *coords = strtok(NULL, " ");
+        char *dir_s  = strtok(NULL, " ");
+        char *len_s  = strtok(NULL, " ");
+        if (!coords || !dir_s || !len_s) { send_msg(fd, "ERR bad args\n"); return; }
+        handle_place(player_idx, coords, dir_s[0], atoi(len_s));
+    } else if (strcmp(cmd, "READY")   == 0) {
+        handle_ready(player_idx);
+    } else if (strcmp(cmd, "FIRE")    == 0) {
+        handle_fire(player_idx, strtok(NULL, " "));
+    } else if (strcmp(cmd, "REMATCH") == 0) {
+        handle_rematch(player_idx);
+    } else if (strcmp(cmd, "QUIT")    == 0) {
+        handle_disconnect(player_idx);
+    } else {
+        send_msg(fd, "ERR unknown command\n");
+    }
 }
 
 // command handlers
