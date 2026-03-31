@@ -2,7 +2,23 @@
 #include "game.h"
 #include "utils.h"
 
+// Protocol: line-based. Shots reported as "HIT ColRow" / "MISS ColRow" (e.g. HIT E5). Grid chars in game.c: . S X M.
+// BOARD_OWN + 100 chars: rows 0..9 of own_grid concatenated (client shows ships as 'S').
+
 Game game;
+
+static void send_board_own(int fd, const Player *p) {
+    char line[10 + GRID_SIZE * GRID_SIZE + 2];
+    memcpy(line, "BOARD_OWN ", 10);
+    int k = 10;
+    for (int r = 0; r < GRID_SIZE; r++) {
+        memcpy(line + k, p->own_grid[r], GRID_SIZE);
+        k += GRID_SIZE;
+    }
+    line[k++] = '\n';
+    line[k] = '\0';
+    send_msg(fd, "%s", line);
+}
 
 void main_loop(int listen_fd);
 void handle_new_connection(int listen_fd);
@@ -115,6 +131,8 @@ void handle_new_connection(int listen_fd) {
         game.p[1].fd = fd1;
         send_msg(fd0, "PLACING\n");
         send_msg(fd1, "PLACING\n");
+        send_board_own(fd0, &game.p[0]);
+        send_board_own(fd1, &game.p[1]);
     }
 
 }
@@ -228,14 +246,24 @@ void handle_place(int player_idx, char *coords, char dir, int len) {
         send_msg(p->fd, "ERR bad coords\n");
         return;
     }
+    if (len < 2 || len > 5) {
+        send_msg(p->fd, "ERR ship length must be 2-5 (fleet is 2,3,3,4,5)\n");
+        return;
+    }
+    if (p->ships_left_by_len[len] <= 0) {
+        send_msg(p->fd, "ERR no ship of that length left to place\n");
+        return;
+    }
     if (!can_place_ship(p->own_grid, p->ship_id, row, col, dir, len)) {
         send_msg(p->fd, "ERR invalid placement\n");
         return;
     }
 
     place_ship(p->own_grid, p->ship_id, row, col, dir, len);
+    p->ships_left_by_len[len]--;
     p->ships_placed++;
     send_msg(p->fd, "OK\n");
+    send_board_own(p->fd, p);
 }
 
 void handle_ready(int player_idx) {
@@ -280,8 +308,9 @@ void handle_fire(int player_idx, char *coords) {
         return;
     }
 
-    if (result == 'H') {
-        game.p[shooter].shot_grid[row][col] = 'H';
+    // Protocol: still says "HIT" / "MISS" to client; server grids use 'X' / 'M' (same as game.c).
+    if (result == 'X') {
+        game.p[shooter].shot_grid[row][col] = 'X';
         send_msg(game.p[shooter].fd, "HIT %c%d\n", 'A' + col, row + 1);
         send_msg(game.p[target].fd, "OPP_HIT %c%d\n", 'A' + col, row + 1);
 
@@ -322,6 +351,8 @@ void handle_rematch(int player_idx) {
         game.p[1].fd = fd1;
         send_msg(fd0, "PLACING\n");
         send_msg(fd1, "PLACING\n");
+        send_board_own(fd0, &game.p[0]);
+        send_board_own(fd1, &game.p[1]);
     } else {
         send_msg(p->fd, "WAIT\n");
     }

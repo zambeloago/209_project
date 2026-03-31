@@ -2,7 +2,7 @@
 #include "game.h"
 #include <errno.h>
 
-// "A5" -> row=4, col=0
+// Wire format "A5": letter A-J = column 0-9, digits = row 1-10 -> internal row 0-9, col 0-9 (grid[row][col]).
 int parse_coords(const char *str, int *row, int *col) {
     if (!str || strlen(str) < 2) return 0;
     *col = str[0] - 'A';

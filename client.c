@@ -2,6 +2,7 @@
 #include "utils.h"
 #include "game.h"
 
+// Local boards match server/game: '.' water, 'S' ship, 'X' hit ship, 'M' miss. shot_grid: '.' unfired.
 #define ANSI_RED   "\033[31m"
 #define ANSI_GREEN "\033[32m"
 #define ANSI_BLUE  "\033[34m"
@@ -15,15 +16,6 @@ char shot_grid[GRID_SIZE][GRID_SIZE];
 void update_grid(char grid[GRID_SIZE][GRID_SIZE], int row, int col, char val);
 void print_grids(void);
 void print_message(const char *msg);
-
-static int parse_coords_local(const char *str, int *row, int *col) {
-    if (!str || !row || !col || strlen(str) < 2) return 0;
-    if (str[0] < 'A' || str[0] > 'J') return 0;
-    *col = str[0] - 'A';
-    *row = atoi(str + 1) - 1;
-    return *row >= 0 && *row < GRID_SIZE;
-}
-
 
 // setup
 int connect_to_server(const char *host, int port) {
@@ -83,7 +75,7 @@ void *recv_loop(void *arg) {
 // input loop
 void input_loop(int fd) {
     char line[BUF_SIZE];
-    printf("Commands: LOGIN <n> | PLACE <A-J><1-10> <H|V> <len> | READY | FIRE <A-J><1-10> | REMATCH | QUIT\n");
+    printf("Commands: LOGIN <n> | PLACE <A-J><1-10> <H|V> <len> (fleet 2,3,3,4,5 any order) | READY | FIRE <A-J><1-10> | REMATCH | QUIT\n");
     while (1) {
         printf("> "); fflush(stdout);
         if (!fgets(line, sizeof(line), stdin)) break;
@@ -110,14 +102,14 @@ void print_grids(void) {
         for (int c = 0; c < GRID_SIZE; c++) {
             char cell = own_grid[r][c];
             if      (cell == 'S') printf(ANSI_GREEN "%c " ANSI_RESET, cell);
-            else if (cell == 'H' || cell == 'X') printf(ANSI_RED "%c " ANSI_RESET, cell);
+            else if (cell == 'X') printf(ANSI_RED "%c " ANSI_RESET, cell);
             else if (cell == 'M') printf(ANSI_BLUE "%c " ANSI_RESET, cell);
             else                  printf("%c ", cell);
         }
         printf("   ");
         for (int c = 0; c < GRID_SIZE; c++) {
             char cell = shot_grid[r][c];
-            if      (cell == 'H' || cell == 'X') printf(ANSI_RED "%c " ANSI_RESET, cell);
+            if      (cell == 'X') printf(ANSI_RED "%c " ANSI_RESET, cell);
             else if (cell == 'M') printf(ANSI_BLUE "%c " ANSI_RESET, cell);
             else                  printf("%c ", cell);
         }
@@ -128,6 +120,22 @@ void print_grids(void) {
 
 void print_message(const char *msg) {
     printf("\r");
+    // One line: "BOARD_OWN " then 100 chars (10 rows of own_grid); server authoritative for '.' 'S' 'X' 'M'.
+    if (strncmp(msg, "BOARD_OWN ", 10) == 0) {
+        const char *s = msg + 10;
+        int n = (int)strlen(s);
+        if (n >= GRID_SIZE * GRID_SIZE) {
+            for (int r = 0; r < GRID_SIZE; r++) {
+                for (int c = 0; c < GRID_SIZE; c++) {
+                    own_grid[r][c] = s[r * GRID_SIZE + c];
+                }
+            }
+            print_grids();
+        }
+        printf("> "); fflush(stdout);
+        return;
+    }
+
     char copy[BUF_SIZE];
     strncpy(copy, msg, BUF_SIZE - 1);
     copy[BUF_SIZE - 1] = '\0';
@@ -135,10 +143,11 @@ void print_message(const char *msg) {
     char *rest = strtok(NULL, "");
     if (!cmd) return;
 
-    if      (!strcmp(cmd, "HIT"))      { int r, c; if (parse_coords_local(rest, &r, &c)) update_grid(shot_grid, r, c, 'H'); print_grids(); printf(ANSI_RED   "HIT!\n"               ANSI_RESET); }
-    else if (!strcmp(cmd, "MISS"))     { int r, c; if (parse_coords_local(rest, &r, &c)) update_grid(shot_grid, r, c, 'M'); print_grids(); printf(ANSI_BLUE  "Miss.\n"              ANSI_RESET); }
-    else if (!strcmp(cmd, "OPP_HIT"))  { int r, c; if (parse_coords_local(rest, &r, &c)) update_grid(own_grid,  r, c, 'H'); print_grids(); printf(ANSI_RED   "Opponent hit!\n"      ANSI_RESET); }
-    else if (!strcmp(cmd, "OPP_MISS")) { int r, c; if (parse_coords_local(rest, &r, &c)) update_grid(own_grid,  r, c, 'M'); print_grids(); printf(             "Opponent missed.\n"             ); }
+    // Server sends "HIT"/"MISS" tokens; we store hits as 'X' on grids (same as game.c).
+    if      (!strcmp(cmd, "HIT"))      { int r, c; if (rest && parse_coords(rest, &r, &c)) update_grid(shot_grid, r, c, 'X'); print_grids(); printf(ANSI_RED   "HIT!\n"               ANSI_RESET); }
+    else if (!strcmp(cmd, "MISS"))     { int r, c; if (rest && parse_coords(rest, &r, &c)) update_grid(shot_grid, r, c, 'M'); print_grids(); printf(ANSI_BLUE  "Miss.\n"              ANSI_RESET); }
+    else if (!strcmp(cmd, "OPP_HIT"))  { int r, c; if (rest && parse_coords(rest, &r, &c)) update_grid(own_grid,  r, c, 'X'); print_grids(); printf(ANSI_RED   "Opponent hit!\n"      ANSI_RESET); }
+    else if (!strcmp(cmd, "OPP_MISS")) { int r, c; if (rest && parse_coords(rest, &r, &c)) update_grid(own_grid,  r, c, 'M'); print_grids(); printf(             "Opponent missed.\n"             ); }
     else if (!strcmp(cmd, "YOUR_TURN"))  printf(ANSI_BOLD "Your turn — fire!\n"        ANSI_RESET);
     else if (!strcmp(cmd, "OPP_TURN"))   printf(          "Waiting for opponent...\n"             );
     else if (!strcmp(cmd, "WIN"))        printf(ANSI_BOLD ANSI_GREEN "You win!\n"      ANSI_RESET);
