@@ -11,15 +11,41 @@ int  sockfd;
 char own_grid[GRID_SIZE][GRID_SIZE];
 char shot_grid[GRID_SIZE][GRID_SIZE];
 
+static int parse_coords_local(const char *str, int *row, int *col) {
+    if (!str || !row || !col || strlen(str) < 2) return 0;
+    if (str[0] < 'A' || str[0] > 'J') return 0;
+    *col = str[0] - 'A';
+    *row = atoi(str + 1) - 1;
+    return *row >= 0 && *row < GRID_SIZE;
+}
+
 
 // setup
 int connect_to_server(const char *host, int port) {
     char port_str[8];
     snprintf(port_str, sizeof(port_str), "%d", port);
-    // TODO: getaddrinfo(host, port_str, &hints, &res)
-    // TODO: socket() + connect()
-    // TODO: freeaddrinfo(res), return fd
-    return -1;
+    struct addrinfo hints, *res, *p;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    if (getaddrinfo(host, port_str, &hints, &res) != 0) {
+        perror("getaddrinfo");
+        return -1;
+    }
+
+    int fd = -1;
+    for (p = res; p != NULL; p = p->ai_next) {
+        fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+        if (fd < 0) continue;
+        if (connect(fd, p->ai_addr, p->ai_addrlen) == 0) break;
+        close(fd);
+        fd = -1;
+    }
+
+    freeaddrinfo(res);
+    if (fd < 0) perror("connect");
+    return fd;
 }
 
 // recv thread
@@ -28,9 +54,13 @@ void *recv_loop(void *arg) {
     int  buf_len = 0;
     int  fd = *(int *)arg;
     while (1) {
-        // TODO: recv() into buf + buf_len
-        // TODO: if n <= 0: print disconnected, exit(0)
-        // TODO: update buf_len, null-terminate
+        int n = recv(fd, buf + buf_len, BUF_SIZE - buf_len - 1, 0);
+        if (n <= 0) {
+            printf("\nDisconnected from server.\n");
+            exit(0);
+        }
+        buf_len += n;
+        buf[buf_len] = '\0';
 
         char *start = buf, *nl;
         while ((nl = strchr(start, '\n')) != NULL) {
@@ -38,7 +68,9 @@ void *recv_loop(void *arg) {
             print_message(start);
             start = nl + 1;
         }
-        // TODO: memmove remaining to front, update buf_len
+        int remaining = (int)((buf + buf_len) - start);
+        memmove(buf, start, remaining);
+        buf_len = remaining;
     }
     return NULL;
 }
@@ -49,9 +81,10 @@ void input_loop(int fd) {
     printf("Commands: LOGIN <n> | PLACE <A-J><1-10> <H|V> <len> | READY | FIRE <A-J><1-10> | REMATCH | QUIT\n");
     while (1) {
         printf("> "); fflush(stdout);
-        // TODO: fgets() — break on NULL (EOF)
-        // TODO: trim_newline, skip empty lines
-        // TODO: send_msg(fd, "%s\n", line)
+        if (!fgets(line, sizeof(line), stdin)) break;
+        trim_newline(line);
+        if (line[0] == '\0') continue;
+        send_msg(fd, "%s\n", line);
     }
 }
 
@@ -70,11 +103,18 @@ void print_grids(void) {
     for (int r = 0; r < GRID_SIZE; r++) {
         printf("%2d", r + 1);
         for (int c = 0; c < GRID_SIZE; c++) {
-            // TODO: print own_grid[r][c] with colours (S=green, H=red, M=blue)
+            char cell = own_grid[r][c];
+            if      (cell == 'S') printf(ANSI_GREEN "%c " ANSI_RESET, cell);
+            else if (cell == 'H' || cell == 'X') printf(ANSI_RED "%c " ANSI_RESET, cell);
+            else if (cell == 'M') printf(ANSI_BLUE "%c " ANSI_RESET, cell);
+            else                  printf("%c ", cell);
         }
         printf("   ");
         for (int c = 0; c < GRID_SIZE; c++) {
-            // TODO: print shot_grid[r][c] with colours (H=red, M=blue)
+            char cell = shot_grid[r][c];
+            if      (cell == 'H' || cell == 'X') printf(ANSI_RED "%c " ANSI_RESET, cell);
+            else if (cell == 'M') printf(ANSI_BLUE "%c " ANSI_RESET, cell);
+            else                  printf("%c ", cell);
         }
         printf("\n");
     }
@@ -85,14 +125,15 @@ void print_message(const char *msg) {
     printf("\r");
     char copy[BUF_SIZE];
     strncpy(copy, msg, BUF_SIZE - 1);
+    copy[BUF_SIZE - 1] = '\0';
     char *cmd  = strtok(copy, " ");
     char *rest = strtok(NULL, "");
     if (!cmd) return;
 
-    if      (!strcmp(cmd, "HIT"))      { update_grid(shot_grid, 0, 0, 'H'); /* TODO: parse coords */ print_grids(); printf(ANSI_RED   "HIT!\n"               ANSI_RESET); }
-    else if (!strcmp(cmd, "MISS"))     { update_grid(shot_grid, 0, 0, 'M'); /* TODO: parse coords */ print_grids(); printf(ANSI_BLUE  "Miss.\n"              ANSI_RESET); }
-    else if (!strcmp(cmd, "OPP_HIT"))  { update_grid(own_grid,  0, 0, 'H'); /* TODO: parse coords */ print_grids(); printf(ANSI_RED   "Opponent hit!\n"      ANSI_RESET); }
-    else if (!strcmp(cmd, "OPP_MISS")) { update_grid(own_grid,  0, 0, 'M'); /* TODO: parse coords */ print_grids(); printf(             "Opponent missed.\n"             ); }
+    if      (!strcmp(cmd, "HIT"))      { int r, c; if (parse_coords_local(rest, &r, &c)) update_grid(shot_grid, r, c, 'H'); print_grids(); printf(ANSI_RED   "HIT!\n"               ANSI_RESET); }
+    else if (!strcmp(cmd, "MISS"))     { int r, c; if (parse_coords_local(rest, &r, &c)) update_grid(shot_grid, r, c, 'M'); print_grids(); printf(ANSI_BLUE  "Miss.\n"              ANSI_RESET); }
+    else if (!strcmp(cmd, "OPP_HIT"))  { int r, c; if (parse_coords_local(rest, &r, &c)) update_grid(own_grid,  r, c, 'H'); print_grids(); printf(ANSI_RED   "Opponent hit!\n"      ANSI_RESET); }
+    else if (!strcmp(cmd, "OPP_MISS")) { int r, c; if (parse_coords_local(rest, &r, &c)) update_grid(own_grid,  r, c, 'M'); print_grids(); printf(             "Opponent missed.\n"             ); }
     else if (!strcmp(cmd, "YOUR_TURN"))  printf(ANSI_BOLD "Your turn — fire!\n"        ANSI_RESET);
     else if (!strcmp(cmd, "OPP_TURN"))   printf(          "Waiting for opponent...\n"             );
     else if (!strcmp(cmd, "WIN"))        printf(ANSI_BOLD ANSI_GREEN "You win!\n"      ANSI_RESET);
@@ -113,10 +154,15 @@ int main(int argc, char *argv[]) {
     init_grid(own_grid);
     init_grid(shot_grid);
     sockfd = connect_to_server(argv[1], atoi(argv[2]));
+    if (sockfd < 0) exit(1);
     printf("Connected to %s:%s\n", argv[1], argv[2]);
     pthread_t tid;
-    // TODO: pthread_create(&tid, NULL, recv_loop, &sockfd)
-    // TODO: pthread_detach(tid)
+    if (pthread_create(&tid, NULL, recv_loop, &sockfd) != 0) {
+        perror("pthread_create");
+        close(sockfd);
+        exit(1);
+    }
+    pthread_detach(tid);
     input_loop(sockfd);
     close(sockfd);
     return 0;
