@@ -1,5 +1,6 @@
 #include "common.h"
 #include "utils.h"
+#include "game.h"
 
 #define ANSI_RED   "\033[31m"
 #define ANSI_GREEN "\033[32m"
